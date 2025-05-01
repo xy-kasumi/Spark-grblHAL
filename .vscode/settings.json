@@ -1,0 +1,9 @@
+{
+    "files.associations": {
+        "usb_serial.h": "c",
+        "btt_octopus_pro_map.h": "c",
+        "flash.h": "c",
+        "driver.h": "c",
+        "hal.h": "c"
+    }
+}

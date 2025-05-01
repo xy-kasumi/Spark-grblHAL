@@ -2684,6 +2684,7 @@ bool driver_init (void)
         while(true); // Cannot boot if no communication channel is available!
 #endif
 
+/*
 #if EEPROM_ENABLE
     i2c_eeprom_init();
 #elif FLASH_ENABLE
@@ -2691,8 +2692,9 @@ bool driver_init (void)
     hal.nvs.memcpy_from_flash = memcpy_from_flash;
     hal.nvs.memcpy_to_flash = memcpy_to_flash;
 #else
+*/
     hal.nvs.type = NVS_None;
-#endif
+//#endif
 
 // driver capabilities
 
