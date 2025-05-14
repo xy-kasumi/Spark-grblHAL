@@ -2870,6 +2870,11 @@ bool driver_init (void)
 
 #include "grbl/plugins_init.h"
 
+#if EDM_ENABLE
+    extern void edm_init (void);
+    edm_init();
+#endif
+
 #if MPG_ENABLE == 1
     if(!hal.driver_cap.mpg_mode)
         hal.driver_cap.mpg_mode = stream_mpg_register(stream_open_instance(MPG_STREAM, 115200, NULL, NULL), false, NULL);
