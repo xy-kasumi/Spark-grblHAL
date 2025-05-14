@@ -10,16 +10,6 @@
 
 #include <stdio.h>
 
-/* ------------------------------------------------------------------ */
-/* ===== USER ADJUSTABLES =========================================== */
-#define EDM_I2C_GPIO GPIOB
-#define EDM_I2C_SCL_PIN 8
-#define EDM_I2C_SDA_PIN 9
-#define EDM_I2C I2C4                              // PB8/PB9 is I2C4
-#define EDM_I2C_AF GPIO_AF4_I2C4                  // TODO: auto-gen
-#define EDM_I2C_CLKENA __HAL_RCC_I2C4_CLK_ENABLE  // TODO: auto-gen
-#define EDM_I2C_IRQEVT I2C4_EV_IRQn               // TODO: auto-gen
-#define EDM_I2C_IRQERR I2C4_ER_IRQn               // TODO: auto-gen
 
 #define EDM_ADDR 0x3b       // <-- change to suit
 #define EDM_REG_FIRST 0x00  // first register to read
@@ -64,72 +54,44 @@ static status_code_t mcode_validate(parser_block_t* block) {
 }
 
 static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
-    if (block->user_mcode != EDM_MCODE_READ) {
-        if (other_mcode_ptrs.execute) {
-            other_mcode_ptrs.execute(state, block);
-        }
-        return;
+  if (block->user_mcode != EDM_MCODE_READ) {
+    if (other_mcode_ptrs.execute) {
+      other_mcode_ptrs.execute(state, block);
     }
-    
-    char reply[40];
-    /* `[EDM:xx,yy,zz]` (expand as required) */
-    snprintf(reply, sizeof(reply), "[EDM:Hello]" ASCII_EOL);
-    hal.stream.write(reply);
+    return;
+  }
+
+  bool succ;
+
+  uint8_t buf[1];
+  i2c_transfer_t tx;
+  tx.address = EDM_ADDR;
+  tx.word_addr = 0x03;
+  tx.word_addr_bytes = 1;
+  tx.count = 1;
+  tx.data = buf;
+  tx.no_block = false;
+  if (i2c_transfer(&tx, true)) {
+    succ = true;
+  } else {
+    succ = false;
+  }
+
+  char reply[40];
+  if (succ) {
+    snprintf(reply, sizeof(reply), "[EDM:I2C-OK: temp=%d]" ASCII_EOL, buf[0]);
+  } else {
+    snprintf(reply, sizeof(reply), "[EDM:FAIL]" ASCII_EOL);
+  }
+  hal.stream.write(reply);
 }
 
 /* ------------------------------------------------------------------ */
 /* ---------------- PLUGIN INITIALISATION --------------------------- */
 
-static I2C_HandleTypeDef edm_i2c_port = {
-    .Instance = EDM_I2C,
-    .Init.Timing = 0x00B03FDB,  // 400 kHz
-    .Init.OwnAddress1 = 0,
-    .Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT,
-    .Init.DualAddressMode = I2C_DUALADDRESS_DISABLE,
-    .Init.OwnAddress2 = 0,
-    .Init.GeneralCallMode = I2C_GENERALCALL_DISABLE,
-    .Init.NoStretchMode = I2C_NOSTRETCH_DISABLE};
-
-void I2C_IRQEVT_Handler(void) {
-  HAL_I2C_EV_IRQHandler(&edm_i2c_port);
-}
-
-void I2C_IRQERR_Handler(void) {
-  HAL_I2C_ER_IRQHandler(&edm_i2c_port);
-}
 
 void edm_init() {
-  // init i2c
-  GPIO_InitTypeDef init_struct = {
-      .Pin = (1 << EDM_I2C_SCL_PIN) | (1 << EDM_I2C_SDA_PIN),
-      .Mode = GPIO_MODE_AF_OD,
-      .Pull = GPIO_PULLUP,
-      .Speed = GPIO_SPEED_FREQ_VERY_HIGH,
-      .Alternate = EDM_I2C_AF};
-  HAL_GPIO_Init(EDM_I2C_GPIO, &init_struct);
-
-  EDM_I2C_CLKENA();
-
-  HAL_I2C_Init(&edm_i2c_port);
-  HAL_I2CEx_ConfigAnalogFilter(&edm_i2c_port, I2C_ANALOGFILTER_ENABLE);
-
-  HAL_NVIC_EnableIRQ(EDM_I2C_IRQEVT);
-  HAL_NVIC_EnableIRQ(EDM_I2C_IRQERR);
-
-  static const periph_pin_t scl = {.function = Output_SCK,
-                                   .group = PinGroup_I2C,
-                                   .port = EDM_I2C_GPIO,
-                                   .pin = EDM_I2C_SCL_PIN,
-                                   .mode = {.mask = PINMODE_OD}};
-
-  static const periph_pin_t sda = {.function = Bidirectional_SDA,
-                                   .group = PinGroup_I2C,
-                                   .port = EDM_I2C_GPIO,
-                                   .pin = EDM_I2C_SDA_PIN,
-                                   .mode = {.mask = PINMODE_OD}};
-
-  hal.periph_port.register_pin(&scl);
-  hal.periph_port.register_pin(&sda);
+  i2c_start();
 
   /* ----------- 2.  1 kHz timer --------------------------------- */
   // timer_handle_t t = hal.timers.alloc(1000, true, edm_poll_isr, NULL);
@@ -141,7 +103,7 @@ void edm_init() {
   grbl.user_mcode.validate = mcode_validate;
   grbl.user_mcode.execute = mcode_execute;
 
-  /* optional hello */
+  // optional hello
   report_plugin("EDM", "0.0");
 }
 
