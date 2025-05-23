@@ -86,9 +86,23 @@ static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
   hal.stream.write(reply);
 }
 
-/* ------------------------------------------------------------------ */
-/* ---------------- PLUGIN INITIALISATION --------------------------- */
+////////////////////////////////////////////////////////////////////////////////
+// Plugin Reporting
 
+static on_report_options_ptr other_reports;
+
+static void edm_report_options(bool newopt) {
+  if (other_reports) {
+    other_reports(newopt);
+  }
+
+  if (!newopt) {
+    report_plugin("EDM", "0.0");
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Plugin Init
 
 void edm_init() {
   i2c_start();
@@ -103,8 +117,9 @@ void edm_init() {
   grbl.user_mcode.validate = mcode_validate;
   grbl.user_mcode.execute = mcode_execute;
 
-  // optional hello
-  report_plugin("EDM", "0.0");
+  // Register report printer.
+  other_reports = grbl.on_report_options;
+  grbl.on_report_options = edm_report_options;
 }
 
 #endif /** EDM_ENABLE */
