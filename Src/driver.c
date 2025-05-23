@@ -1018,11 +1018,11 @@ static void stepperPulseStart (stepper_t *stepper)
     }
 #endif
 
-    if(stepper->dir_change)
-        stepperSetDirOutputs(stepper->dir_outbits);
+    if(stepper->dir_changed.value)
+        stepperSetDirOutputs(stepper->dir_out);
 
-    if(stepper->step_outbits.value) {
-        stepperSetStepOutputs(stepper->step_outbits);
+    if(stepper->step_out.value) {
+        stepperSetStepOutputs(stepper->step_out);
         PULSE_TIMER->CR1 |= TIM_CR1_CEN;
     }
 }
@@ -1040,12 +1040,12 @@ static void stepperPulseStartDelayed (stepper_t *stepper)
     }
 #endif
 
-    if(stepper->dir_change) {
+    if(stepper->dir_changed.value) {
 
-        stepperSetDirOutputs(stepper->dir_outbits);
+        stepperSetDirOutputs(stepper->dir_out);
 
-        if(stepper->step_outbits.value) {
-            step_pulse.out = stepper->step_outbits; // Store out_bits
+        if(stepper->step_out.value) {
+            step_pulse.out = stepper->step_out;
             PULSE_TIMER->DIER = TIM_DIER_CC1IE;
             PULSE_TIMER->CR1 |= TIM_CR1_CEN;
         }
@@ -1053,8 +1053,8 @@ static void stepperPulseStartDelayed (stepper_t *stepper)
         return;
     }
 
-    if(stepper->step_outbits.value) {
-        stepperSetStepOutputs(stepper->step_outbits);
+    if(stepper->step_out.value) {
+        stepperSetStepOutputs(stepper->step_out);
         PULSE_TIMER->DIER = TIM_DIER_UIE;
         PULSE_TIMER->CR1 |= TIM_CR1_CEN;
     }
