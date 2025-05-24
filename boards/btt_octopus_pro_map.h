@@ -175,8 +175,12 @@
 #define AUXOUTPUT7_PORT             GPIOA   // Coolant mist - HE1
 #define AUXOUTPUT7_PIN              3
 
-#define AUXOUTPUT8_PORT             GPIOA  // PULSER GATE
-#define AUXOUTPUT8_PIN              15
+// #define AUXOUTPUT8_PORT             GPIOA  // PULSER GATE
+// #define AUXOUTPUT8_PIN              15
+
+// Consumed by plugin_edm
+#define PULSER_GATE_PORT          GPIOA   // PULSER GATE
+#define PULSER_GATE_PIN           15
 
 /*
 //we need more auxoutput ports defined in outputpin[] to use the full outputs

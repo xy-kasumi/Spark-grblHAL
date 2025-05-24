@@ -14,17 +14,25 @@
 
 #include <stdio.h>
 
-#define EDM_ADDR 0x3b
-#define EDM_REG_FIRST 0x00  // first register to read
-#define EDM_REG_COUNT 3     // how many bytes
+#define EDM_MCODE_START_TNEG 503
+#define EDM_MCODE_START_TPOS 504
+#define EDM_MCODE_STOP 505
+#define EDM_MCODE_READ 550
 
 // You can change this if you somehow want to use Aux8 for different purposes.
 // If you change this, you also need to updard board configuration header.
 #define PIN_FUNCTION_PULSER_GATE Output_Aux8
 
-static const uint8_t REG_CKP_N_PULSE = 0x10;
+// See https://github.com/xy-kasumi/Spark/blob/main/docs/user-PULSER.md for
+// register map
+#define PULSER_ADDR 0x3b
 
-#define EDM_MCODE_READ 550
+static const uint8_t REG_POLARITY = 0x01;
+static const uint8_t REG_PULSE_CURRENT = 0x02;
+static const uint8_t REG_TEMPERATURE = 0x03;
+static const uint8_t REG_PULSE_DUR = 0x04;
+static const uint8_t REG_MAX_DUTY = 0x05;
+static const uint8_t REG_CKP_N_PULSE = 0x10;
 
 // Simple status flag for debugging initialization error.
 // This will be read by M-code.
@@ -46,37 +54,12 @@ static volatile uint64_t last_poll_tick_us;  // hal.get_micros() time
 
 static user_mcode_ptrs_t other_mcode_ptrs;
 
-static user_mcode_type_t mcode_check(user_mcode_t m) {
-  if (m != EDM_MCODE_READ) {
-    return other_mcode_ptrs.check ? other_mcode_ptrs.check(m)
-                                  : UserMCode_Unsupported;
-  }
-
-  return UserMCode_Normal;
-}
-
-static status_code_t mcode_validate(parser_block_t* block) {
-  if (block->user_mcode != EDM_MCODE_READ) {
-    return other_mcode_ptrs.validate ? other_mcode_ptrs.validate(block)
-                                     : Status_Unhandled;
-  }
-
-  return Status_OK;
-}
-
-static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
-  if (block->user_mcode != EDM_MCODE_READ) {
-    if (other_mcode_ptrs.execute) {
-      other_mcode_ptrs.execute(state, block);
-    }
-    return;
-  }
-
+static void exec_mcode_read() {
   bool succ;
 
   uint8_t buf[1];
   i2c_transfer_t tx;
-  tx.address = EDM_ADDR;
+  tx.address = PULSER_ADDR;
   tx.word_addr = 0x03;
   tx.word_addr_bytes = 1;
   tx.count = 1;
@@ -103,6 +86,111 @@ static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
 
   ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "]" ASCII_EOL);
   hal.stream.write(resp);
+}
+
+// blocking I2C register write.
+// returns true if write was successful
+static bool write_reg(uint8_t reg_addr, uint8_t val) {
+  uint8_t buf[6];
+  i2c_transfer_t tx;
+  tx.address = PULSER_ADDR;
+  tx.word_addr = reg_addr;
+  tx.word_addr_bytes = 1;
+  tx.count = 1;
+  tx.data = &val;
+  tx.no_block = false;
+  return i2c_transfer(&tx, true);
+}
+
+inline static void init_gate() {
+  GPIO_InitTypeDef init = {
+      .Pin = 1 << PULSER_GATE_PIN,
+      .Speed = GPIO_SPEED_FREQ_MEDIUM,
+      .Mode = GPIO_MODE_OUTPUT_PP,
+      .Pull = GPIO_NOPULL,
+  };
+  HAL_GPIO_Init(PULSER_GATE_PORT, &init);
+}
+
+inline static void set_gate(bool on) {
+  DIGITAL_OUT(PULSER_GATE_PORT, 1 << PULSER_GATE_PIN, on);
+}
+
+// must not be called when edm_init_status != 0
+static void exec_mcode_start_tneg() {
+  bool all_ok = true;
+  all_ok &= write_reg(REG_PULSE_CURRENT, 1);
+  all_ok &= write_reg(REG_PULSE_DUR, 25);
+  all_ok &= write_reg(REG_MAX_DUTY, 25);
+  all_ok &= write_reg(REG_POLARITY, 2);  // 2: T- W+
+  if (!all_ok) {
+    system_raise_alarm(Alarm_SelftestFailed);
+    return;
+  }
+  set_gate(true);
+}
+
+// must not be called when edm_init_status != 0
+static void exec_mcode_stop() {
+  set_gate(false);
+
+  bool ok = write_reg(REG_POLARITY, 0);  // OFF
+  if (!ok) {
+    system_raise_alarm(Alarm_SelftestFailed);
+    return;
+  }
+}
+
+static inline bool is_edm_mcode(user_mcode_t m) {
+  return (m == EDM_MCODE_READ || m == EDM_MCODE_START_TNEG ||
+          m == EDM_MCODE_START_TPOS || m == EDM_MCODE_STOP);
+}
+
+static user_mcode_type_t mcode_check(user_mcode_t m) {
+  if (!is_edm_mcode(m)) {
+    return other_mcode_ptrs.check ? other_mcode_ptrs.check(m)
+                                  : UserMCode_Unsupported;
+  }
+
+  return UserMCode_Normal;
+}
+
+static status_code_t mcode_validate(parser_block_t* block) {
+  user_mcode_t code = block->user_mcode;
+
+  if (!is_edm_mcode(code)) {
+    return other_mcode_ptrs.validate ? other_mcode_ptrs.validate(block)
+                                     : Status_Unhandled;
+  }
+
+  if (code == EDM_MCODE_READ) {
+    return Status_OK;
+  } else {
+    if (edm_init_status != 0) {
+      return Status_SelfTestFailed;
+    }
+    return Status_OK;
+  }
+}
+
+static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
+  user_mcode_t code = block->user_mcode;
+  if (!is_edm_mcode(code)) {
+    if (other_mcode_ptrs.execute) {
+      other_mcode_ptrs.execute(state, block);
+    }
+    return;
+  }
+
+  if (code == EDM_MCODE_READ) {
+    exec_mcode_read();
+  } else if (code == EDM_MCODE_START_TNEG) {
+    exec_mcode_start_tneg();
+  } else if (code == EDM_MCODE_START_TPOS) {
+    // TODO: implement
+  } else if (code == EDM_MCODE_STOP) {
+    exec_mcode_stop();
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -149,7 +237,7 @@ static void edm_realtime(sys_state_t s) {
   // Do I2C poll
   uint8_t buf[6];
   i2c_transfer_t tx;
-  tx.address = EDM_ADDR;
+  tx.address = PULSER_ADDR;
   tx.word_addr = REG_CKP_N_PULSE;
   tx.word_addr_bytes = 1;
   tx.count = 6;
@@ -210,6 +298,7 @@ void edm_init() {
   i2c_start();
 
   // Find port.
+  /*
   pin_cap_t filter = {
       .output = 1,
       .claimable = 1,
@@ -222,7 +311,11 @@ void edm_init() {
   }
   edm_gate_port_found = true;
   edm_gate_port = found_port;
-  ioport_digital_out(edm_gate_port, false);  // ensure it's off
+  //ioport_digital_out(edm_gate_port, false);  // ensure it's off
+  */
+
+  init_gate();
+  set_gate(false);  // ensure it's off
 
   // Register EDM virtual probe to HAL.
   hal.probe.configure = edm_probe_configure;
