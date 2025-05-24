@@ -175,6 +175,9 @@
 #define AUXOUTPUT7_PORT             GPIOA   // Coolant mist - HE1
 #define AUXOUTPUT7_PIN              3
 
+#define AUXOUTPUT8_PORT             GPIOA  // PULSER GATE
+#define AUXOUTPUT8_PIN              15
+
 /*
 //we need more auxoutput ports defined in outputpin[] to use the full outputs
 #define AUXOUTPUT8_PORT             GPIOB   // - HE2

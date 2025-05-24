@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+/*
+ * Driver for Spark EDM.
+
+ * Uses Aux8 as Pulse GATE (must be defined in board confiugration headers)
+ */
 #if EDM_ENABLE
 
 #include "driver.h"
@@ -13,9 +18,23 @@
 #define EDM_REG_FIRST 0x00  // first register to read
 #define EDM_REG_COUNT 3     // how many bytes
 
+// You can change this if you somehow want to use Aux8 for different purposes.
+// If you change this, you also need to updard board configuration header.
+#define PIN_FUNCTION_PULSER_GATE Output_Aux8
+
 static const uint8_t REG_CKP_N_PULSE = 0x10;
 
 #define EDM_MCODE_READ 550
+
+// Simple status flag for debugging initialization error.
+// This will be read by M-code.
+// 0: OK
+// 255: initial value
+// You can use whatever other numbers to indicate failure modes.
+static volatile uint8_t edm_init_status = 255;
+
+static bool edm_gate_port_found = false;
+static uint8_t edm_gate_port;
 
 static volatile uint32_t edm_timer_cnt = 0;
 static volatile uint32_t edm_poll_cnt = 0;
@@ -72,7 +91,8 @@ static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
 
   char resp[100];
   size_t ofs = 0;
-  ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "[EDM:");
+  ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "[EDM:stat=%d,",
+                  edm_init_status);
   if (succ) {
     ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "i2c=ok,temp=%d", temp);
   } else {
@@ -165,8 +185,44 @@ static void edm_report_options(bool newopt) {
 ////////////////////////////////////////////////////////////////////////////////
 // Plugin Init
 
+// returns true if found. Stores result into data (uint8_t*)
+static bool port_search_cb(xbar_t* properties, uint8_t port, void* data) {
+  uint8_t* result_ptr = (uint8_t*)data;
+
+  if (properties->function == PIN_FUNCTION_PULSER_GATE) {
+    *result_ptr = port;
+    return true;
+  }
+  return false;
+}
+
 void edm_init() {
+  // Register report printer.
+  other_reports = grbl.on_report_options;
+  grbl.on_report_options = edm_report_options;
+
+  // Register M-code handler by appending to the call chain.
+  memcpy(&other_mcode_ptrs, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
+  grbl.user_mcode.check = mcode_check;
+  grbl.user_mcode.validate = mcode_validate;
+  grbl.user_mcode.execute = mcode_execute;
+
   i2c_start();
+
+  // Find port.
+  pin_cap_t filter = {
+      .output = 1,
+      .claimable = 1,
+  };
+  uint8_t found_port;
+  if (!ioports_enumerate(Port_Digital, Port_Output, filter, port_search_cb,
+                         &found_port)) {
+    edm_init_status = 1;  // port not found; probably macro config error
+    return;
+  }
+  edm_gate_port_found = true;
+  edm_gate_port = found_port;
+  ioport_digital_out(edm_gate_port, false);  // ensure it's off
 
   // Register EDM virtual probe to HAL.
   hal.probe.configure = edm_probe_configure;
@@ -180,15 +236,8 @@ void edm_init() {
   other_realtime = grbl.on_execute_realtime;
   grbl.on_execute_realtime = edm_realtime;
 
-  // Register M-code handler by appending to the call chain.
-  memcpy(&other_mcode_ptrs, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
-  grbl.user_mcode.check = mcode_check;
-  grbl.user_mcode.validate = mcode_validate;
-  grbl.user_mcode.execute = mcode_execute;
-
-  // Register report printer.
-  other_reports = grbl.on_report_options;
-  grbl.on_report_options = edm_report_options;
+  // Mark as OK.
+  edm_init_status = 0;
 }
 
 #endif /** EDM_ENABLE */
