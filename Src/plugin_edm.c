@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
  * Driver for Spark EDM.
-
- * Uses Aux8 as Pulse GATE (must be defined in board confiugration headers)
+ * 
+ * M503: Energize
+ * M505: De-energize
+ * G38.2, G38.3: Probe using current sensing. De-energize (same as M505) on contact or not-found completion.
  */
 #if EDM_ENABLE
 
@@ -52,6 +54,7 @@ static volatile uint64_t last_poll_tick_us;  // hal.get_micros() time
 ////////////////////////////////////////////////////////////////////////////////
 // M-code handlers
 
+static on_probe_completed_ptr other_probe_completed;
 static user_mcode_ptrs_t other_mcode_ptrs;
 
 static void exec_mcode_read() {
@@ -193,6 +196,22 @@ static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
   }
 }
 
+static void edm_probe_completed() {
+  // stop discharge to minimize work damage.
+  set_gate(false);
+
+  bool ok = write_reg(REG_POLARITY, 0);  // OFF
+  if (!ok) {
+    system_raise_alarm(Alarm_SelftestFailed);
+    return;
+  }
+
+  //
+  if (other_probe_completed) {
+    other_probe_completed();
+  }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // EDM Probe
 
@@ -321,6 +340,10 @@ void edm_init() {
   hal.probe.configure = edm_probe_configure;
   hal.probe.connected_toggle = edm_probe_connected_toggle;
   hal.probe.get_state = edm_probe_get_state;
+
+  // Register probe completed handler.
+  other_probe_completed = grbl.on_probe_completed;
+  grbl.on_probe_completed = edm_probe_completed;
 
   // Register PULSER polling as rate-limited "realtime" process.
   // This is better than hal.timers based approach.
