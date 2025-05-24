@@ -14,10 +14,14 @@
 #define EDM_REG_FIRST 0x00  // first register to read
 #define EDM_REG_COUNT 3     // how many bytes
 
+static const uint8_t REG_CKP_N_PULSE = 0x10;
+
 #define EDM_MCODE_READ 550
 
 static volatile uint8_t edm_timer_status = 255;  // 0: success, 255: unknown
 static volatile uint32_t edm_timer_cnt = 0;
+static volatile uint32_t edm_poll_cnt = 0;
+static volatile uint64_t last_poll_tick_us;  // hal.get_micros() time
 
 ////////////////////////////////////////////////////////////////////////////////
 // M-code handlers
@@ -75,8 +79,9 @@ static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
   } else {
     ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "i2c=fail");
   }
-  ofs += snprintf(resp + ofs, sizeof(resp) - ofs, ",status=%d,loops=%ld",
-                  edm_timer_status, edm_timer_cnt);
+  ofs +=
+      snprintf(resp + ofs, sizeof(resp) - ofs, ",status=%d,loops=%ld,polls=%ld",
+               edm_timer_status, edm_timer_cnt, edm_poll_cnt);
 
   ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "]" ASCII_EOL);
   hal.stream.write(resp);
@@ -108,12 +113,74 @@ probe_state_t edm_probe_get_state() {
 ////////////////////////////////////////////////////////////////////////////////
 // Timer
 
-static void edm_poll_isr(void* context) {
-  //   uint8_t buf[EDM_REG_COUNT];
-  // if (i2c_read(EDM_I2C, EDM_ADDR, EDM_REG_FIRST, buf, EDM_REG_COUNT))
-  // memcpy(edm_snapshot, buf, EDM_REG_COUNT);  // update the live copy
-  //}
+on_execute_realtime_ptr other_realtime;
+
+static void edm_realtime(sys_state_t s) {
+  if (other_realtime) {
+    other_realtime(s);
+  }
+
+  // Limit to 1ms polling rate.
   edm_timer_cnt++;
+  uint64_t t_curr = hal.get_micros();
+  if (t_curr - last_poll_tick_us < 1000) {
+    return;
+  }
+  last_poll_tick_us = t_curr;
+
+  // Do I2C poll
+  uint8_t buf[6];
+  i2c_transfer_t tx;
+  tx.address = EDM_ADDR;
+  tx.word_addr = REG_CKP_N_PULSE;
+  tx.word_addr_bytes = 1;
+  tx.count = 6;
+  tx.data = buf;
+  tx.no_block = false;
+  if (!i2c_transfer(&tx, true)) {
+    return;
+  }
+
+  uint8_t r_pulse = buf[3];
+  uint8_t r_short = buf[4];
+  uint8_t r_open = buf[5];
+  edm_poll_cnt++;
+}
+
+static void edm_poll_isr(void* context) {
+  edm_timer_cnt++;
+
+  /*
+  return;
+
+  if (i2c_port.State != HAL_I2C_STATE_READY) {
+    return; // something is wrong
+  }
+
+
+  HAL_StatusTypeDef ret = HAL_I2C_Mem_Read(&i2c_port, i2c->address << 1,
+  i2c->word_addr, i2c->word_addr_bytes == 2 ? I2C_MEMADD_SIZE_16BIT :
+  I2C_MEMADD_SIZE_8BIT, i2c->data, i2c->count, 100);
+
+
+  return ret == HAL_OK;
+  */
+
+  uint8_t buf[6];
+  i2c_transfer_t tx;
+  tx.address = EDM_ADDR;
+  tx.word_addr = REG_CKP_N_PULSE;
+  tx.word_addr_bytes = 1;
+  tx.count = 1;
+  tx.data = buf;
+  tx.no_block = false;
+  if (!i2c_transfer(&tx, true)) {
+    return;
+  }
+
+  uint8_t r_pulse = buf[3];
+  uint8_t r_short = buf[4];
+  uint8_t r_open = buf[5];
 }
 
 void edm_start_timer() {
@@ -168,7 +235,9 @@ void edm_init() {
   hal.probe.get_state = edm_probe_get_state;
 
   // Register timer (can fail).
-  edm_start_timer();
+  other_realtime = grbl.on_execute_realtime;
+  grbl.on_execute_realtime = edm_realtime;
+  // edm_start_timer();
 
   // Register M-code handler by appending to the call chain.
   memcpy(&other_mcode_ptrs, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
