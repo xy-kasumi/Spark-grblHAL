@@ -363,7 +363,7 @@ hal_timer_t timerClaim (timer_cap_t cap, uint32_t timebase)
     for(idx = 0; idx < n_timers; idx++) {
         if((t = timers[idx].claimed ? NULL : &timers[idx])) {
 
-            uint32_t f = timer_clk_enable(timers[idx].timer) / 1000;
+            uint32_t f = timer_clk_enable(timers[idx].timer) / 1000; // freq in kHz
 
             timers[idx].claimed = On;
             timers[idx].timer->CR1 |= TIM_CR1_OPM|TIM_CR1_DIR|TIM_CR1_CKD_1|TIM_CR1_ARPE /*|TIM_CR1_URS*/;
@@ -380,36 +380,40 @@ hal_timer_t timerClaim (timer_cap_t cap, uint32_t timebase)
     return t;
 }
 
-bool timerCfg (hal_timer_t timer, timer_cfg_t *cfg)
-{
-    bool ok;
+bool timerCfg(hal_timer_t timer, timer_cfg_t* cfg) {
+  if (timer == NULL) {
+    return false;
+  }
+  dtimer_t* dtimer = (dtimer_t*)timer;
 
-    if((ok = timer != NULL)) {
+  // configure
+  memcpy(&dtimer->cfg, cfg, sizeof(timer_cfg_t));
 
-        memcpy(&((dtimer_t *)timer)->cfg, cfg, sizeof(timer_cfg_t));
+  if (cfg->single_shot) {
+    dtimer->timer->CR1 |= TIM_CR1_OPM;
+  } else {
+    dtimer->timer->CR1 &= ~TIM_CR1_OPM;
+  }
 
-        if(cfg->single_shot)
-            ((dtimer_t *)timer)->timer->CR1 |= TIM_CR1_OPM;
-        else
-            ((dtimer_t *)timer)->timer->CR1 &= ~TIM_CR1_OPM;
+  if (dtimer->cap.comp1) {
+    dtimer->timer->DIER |= TIM_DIER_CC1IE;
+  } else {
+    dtimer->timer->DIER &= ~TIM_DIER_CC1IE;
+  }
 
-        if((ok = cfg->irq0_callback && ((dtimer_t *)timer)->cap.comp1))
-            ((dtimer_t *)timer)->timer->DIER |= TIM_DIER_CC1IE;
-        else
-            ((dtimer_t *)timer)->timer->DIER &= ~TIM_DIER_CC1IE;
+  if (dtimer->cap.comp2) {
+    dtimer->timer->DIER |= TIM_DIER_CC2IE;
+  } else {
+    dtimer->timer->DIER &= ~TIM_DIER_CC2IE;
+  }
 
-        if(ok && (ok = cfg->irq1_callback && ((dtimer_t *)timer)->cap.comp2))
-            ((dtimer_t *)timer)->timer->DIER |= TIM_DIER_CC2IE;
-        else
-            ((dtimer_t *)timer)->timer->DIER &= ~TIM_DIER_CC2IE;
+  if (cfg->timeout_callback) {
+    dtimer->timer->DIER |= TIM_DIER_UIE;
+  } else {
+    dtimer->timer->DIER &= ~TIM_DIER_UIE;
+  }
 
-        if(ok && cfg->timeout_callback)
-            ((dtimer_t *)timer)->timer->DIER |= TIM_DIER_UIE;
-        else
-            ((dtimer_t *)timer)->timer->DIER &= ~TIM_DIER_UIE;
-    }
-
-    return ok;
+  return true;
 }
 
 bool timerStart (hal_timer_t timer, uint32_t period)
@@ -455,13 +459,13 @@ __attribute__((always_inline)) static inline void _irq_handler (TIM_TypeDef *tim
 
     timer->SR &= ~(TIM_SR_UIF|TIM_SR_CC1IF|TIM_SR_CC2IF);
 
-    if(irq & TIM_SR_UIF)
+    if((irq & TIM_SR_UIF) && cfg->timeout_callback)
         cfg->timeout_callback(cfg->context);
 
-    if(irq & TIM_SR_CC1IF)
+    if((irq & TIM_SR_CC1IF) && cfg->irq0_callback)
         cfg->irq0_callback(cfg->context);
 
-    if(irq & TIM_SR_CC2IF)
+    if((irq & TIM_SR_CC2IF) && cfg->irq1_callback)
         cfg->irq1_callback(cfg->context);
 }
 
