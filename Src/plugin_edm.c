@@ -99,7 +99,7 @@ static bool write_reg(uint8_t reg_addr, uint8_t val) {
   tx.count = 1;
   tx.data = &val;
   tx.no_block = false;
-  return i2c_transfer(&tx, true);
+  return i2c_transfer(&tx, false);
 }
 
 inline static void init_gate() {
