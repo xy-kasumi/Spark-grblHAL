@@ -21,6 +21,7 @@ static const uint8_t REG_CKP_N_PULSE = 0x10;
 static volatile uint8_t edm_timer_status = 255;  // 0: success, 255: unknown
 static volatile uint32_t edm_timer_cnt = 0;
 static volatile uint32_t edm_poll_cnt = 0;
+static volatile bool edm_has_current = false;
 static volatile uint64_t last_poll_tick_us;  // hal.get_micros() time
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -105,8 +106,8 @@ void edm_probe_connected_toggle() {
 // NOTE: Called from stepping interrupt, must run extremely quickly.
 probe_state_t edm_probe_get_state() {
   probe_state_t state = {0};
-  state.triggered = false;  // TODO: implement
-  state.connected = true;   // always connected
+  state.triggered = edm_has_current;
+  state.connected = true;  // always connected
   return state;
 }
 
@@ -144,68 +145,9 @@ static void edm_realtime(sys_state_t s) {
   uint8_t r_pulse = buf[3];
   uint8_t r_short = buf[4];
   uint8_t r_open = buf[5];
+  edm_has_current = (r_pulse > 0 || r_short > 0);
+
   edm_poll_cnt++;
-}
-
-static void edm_poll_isr(void* context) {
-  edm_timer_cnt++;
-
-  /*
-  return;
-
-  if (i2c_port.State != HAL_I2C_STATE_READY) {
-    return; // something is wrong
-  }
-
-
-  HAL_StatusTypeDef ret = HAL_I2C_Mem_Read(&i2c_port, i2c->address << 1,
-  i2c->word_addr, i2c->word_addr_bytes == 2 ? I2C_MEMADD_SIZE_16BIT :
-  I2C_MEMADD_SIZE_8BIT, i2c->data, i2c->count, 100);
-
-
-  return ret == HAL_OK;
-  */
-
-  uint8_t buf[6];
-  i2c_transfer_t tx;
-  tx.address = EDM_ADDR;
-  tx.word_addr = REG_CKP_N_PULSE;
-  tx.word_addr_bytes = 1;
-  tx.count = 1;
-  tx.data = buf;
-  tx.no_block = false;
-  if (!i2c_transfer(&tx, true)) {
-    return;
-  }
-
-  uint8_t r_pulse = buf[3];
-  uint8_t r_short = buf[4];
-  uint8_t r_open = buf[5];
-}
-
-void edm_start_timer() {
-  // 1 tick = 1us = 1000 ns
-  hal_timer_t timer = hal.timer.claim((timer_cap_t){.periodic = 1}, 1000);
-  if (!timer) {
-    edm_timer_status = 1;
-    return;
-  }
-
-  timer_cfg_t cfg = {
-      .single_shot = false,
-      .timeout_callback = edm_poll_isr,
-  };
-  if (!hal.timer.configure(timer, &cfg)) {
-    edm_timer_status = 2;
-    return;
-  }
-  // 1ms = 1000 tick
-  if (!hal.timer.start(timer, 1000)) {
-    edm_timer_status = 3;
-    return;
-  }
-  // succesfully started
-  edm_timer_status = 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -234,10 +176,12 @@ void edm_init() {
   hal.probe.connected_toggle = edm_probe_connected_toggle;
   hal.probe.get_state = edm_probe_get_state;
 
-  // Register timer (can fail).
+  // Register PULSER polling as rate-limited "realtime" process.
+  // This is better than hal.timers based approach.
+  // Doing I2C in timer will cause TMC2209 init to fail, as they're bit-banging
+  // serial comm is very sensitive to timing.
   other_realtime = grbl.on_execute_realtime;
   grbl.on_execute_realtime = edm_realtime;
-  // edm_start_timer();
 
   // Register M-code handler by appending to the call chain.
   memcpy(&other_mcode_ptrs, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
