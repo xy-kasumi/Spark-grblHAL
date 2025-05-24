@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#include "driver.h"  // hal.*, driver macros
-
 #if EDM_ENABLE
 
+#include "driver.h"
 #include "grbl/core_handlers.h"
 #include "grbl/grbl.h"
 #include "i2c.h"
@@ -10,7 +9,7 @@
 
 #include <stdio.h>
 
-#define EDM_ADDR 0x3b       // <-- change to suit
+#define EDM_ADDR 0x3b
 #define EDM_REG_FIRST 0x00  // first register to read
 #define EDM_REG_COUNT 3     // how many bytes
 
@@ -18,7 +17,6 @@ static const uint8_t REG_CKP_N_PULSE = 0x10;
 
 #define EDM_MCODE_READ 550
 
-static volatile uint8_t edm_timer_status = 255;  // 0: success, 255: unknown
 static volatile uint32_t edm_timer_cnt = 0;
 static volatile uint32_t edm_poll_cnt = 0;
 static volatile bool edm_has_current = false;
@@ -80,9 +78,8 @@ static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
   } else {
     ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "i2c=fail");
   }
-  ofs +=
-      snprintf(resp + ofs, sizeof(resp) - ofs, ",status=%d,loops=%ld,polls=%ld",
-               edm_timer_status, edm_timer_cnt, edm_poll_cnt);
+  ofs += snprintf(resp + ofs, sizeof(resp) - ofs, ",loops=%ld,polls=%ld",
+                  edm_timer_cnt, edm_poll_cnt);
 
   ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "]" ASCII_EOL);
   hal.stream.write(resp);
