@@ -1018,8 +1018,17 @@ static void stepperPulseStart (stepper_t *stepper)
     }
 #endif
 
+#if EDM_ENABLE
+    // Always emit dir to simplify the logic.
+    axes_signals_t dir_out = stepper->dir_out;
+    if (stepper->retracting) {
+        dir_out.value = ~dir_out.value;
+    }
+    stepperSetDirOutputs(dir_out);
+#else
     if(stepper->dir_changed.value)
         stepperSetDirOutputs(stepper->dir_out);
+#endif
 
     if(stepper->step_out.value) {
         stepperSetStepOutputs(stepper->step_out);
@@ -1038,6 +1047,11 @@ static void stepperPulseStartDelayed (stepper_t *stepper)
         hal.stepper.pulse_start(stepper);
         return;
     }
+#endif
+
+#if EDM_ENABLE
+    // DELAYED VERSION NOT SUPPORTED!!!!
+    system_raise_alarm(Alarm_MotorFault);
 #endif
 
     if(stepper->dir_changed.value) {

@@ -52,6 +52,8 @@ static volatile uint32_t edm_poll_cnt = 0;
 static volatile bool edm_has_current = false;
 static volatile uint64_t last_poll_tick_us;  // hal.get_micros() time
 
+static volatile bool edm_removal_active = false;
+
 ////////////////////////////////////////////////////////////////////////////////
 // M-code handlers
 
@@ -271,6 +273,11 @@ static void edm_realtime(sys_state_t s) {
   uint8_t r_short = buf[4];
   uint8_t r_open = buf[5];
   edm_has_current = (r_pulse > 0 || r_short > 0);
+
+  if (r_short > 127) {
+    // retract request
+    hal.edm_state.discharge_short = true;
+  }
 
   edm_poll_cnt++;
 }
