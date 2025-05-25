@@ -4,43 +4,15 @@
 [submodule "eeprom"]
 	path = eeprom
 	url = https://github.com/grblHAL/Plugin_EEPROM
-[submodule "networking"]
-	path = networking
-	url = https://github.com/grblHAL/Plugin_networking
-[submodule "sdcard"]
-	path = sdcard
-	url = https://github.com/grblHAL/Plugin_SD_card
-
-[submodule "bluetooth"]
-	path = bluetooth
-	url = https://github.com/grblHAL/Plugins_Bluetooth
-[submodule "laser"]
-	path = laser
-	url = https://github.com/grblHAL/Plugins_laser
-[submodule "spindle"]
-	path = spindle
-	url = https://github.com/grblHAL/Plugins_spindle
-[submodule "openpnp"]
-	path = openpnp
-	url = https://github.com/grblHAL/Plugin_OpenPNP
 [submodule "fans"]
 	path = fans
 	url = https://github.com/grblHAL/Plugin_fans
-[submodule "webui"]
-	path = webui
-	url = https://github.com/grblHAL/Plugin_WebUI
 [submodule "trinamic"]
 	path = trinamic
 	url = https://github.com/terjeio/Trinamic-library.git
 [submodule "motors"]
 	path = motors
 	url = https://github.com/grblHAL/Plugins_motor.git
-[submodule "plasma"]
-	path = plasma
-	url = https://github.com/grblHAL/Plugin_plasma
 [submodule "plugins"]
 	path = plugins
 	url = https://github.com/grblHAL/Plugins_misc
-[submodule "keypad"]
-	path = keypad
-	url = https://github.com/grblHAL/Plugin_keypad

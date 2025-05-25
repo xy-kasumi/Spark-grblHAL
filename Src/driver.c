@@ -2810,8 +2810,8 @@ bool driver_init (void)
     aux_ctrl_claim_ports(aux_claim_explicit, NULL);
 #endif
 
-    extern bool aux_out_claim_explicit (aux_ctrl_out_t *aux_ctrl);
-    aux_ctrl_claim_out_ports(aux_out_claim_explicit, NULL);
+    // extern bool aux_out_claim_explicit (aux_ctrl_out_t *aux_ctrl);
+    // aux_ctrl_claim_out_ports(aux_out_claim_explicit, NULL);
 
 #if DRIVER_SPINDLE_ENABLE ||  DRIVER_SPINDLE1_ENABLE
     extern void driver_spindles_init (void);
