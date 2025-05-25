@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /*
  * Driver for Spark EDM.
- * 
+ *
  * M503: Energize
  * M505: De-energize
- * G38.2, G38.3: Probe using current sensing. De-energize (same as M505) on contact or not-found completion.
+ * G38.2, G38.3: Probe using current sensing. De-energize (same as M505) on
+ * contact or not-found completion.
  */
 #if EDM_ENABLE
 
@@ -315,23 +316,6 @@ void edm_init() {
   grbl.user_mcode.execute = mcode_execute;
 
   i2c_start();
-
-  // Find port.
-  /*
-  pin_cap_t filter = {
-      .output = 1,
-      .claimable = 1,
-  };
-  uint8_t found_port;
-  if (!ioports_enumerate(Port_Digital, Port_Output, filter, port_search_cb,
-                         &found_port)) {
-    edm_init_status = 1;  // port not found; probably macro config error
-    return;
-  }
-  edm_gate_port_found = true;
-  edm_gate_port = found_port;
-  //ioport_digital_out(edm_gate_port, false);  // ensure it's off
-  */
 
   init_gate();
   set_gate(false);  // ensure it's off
