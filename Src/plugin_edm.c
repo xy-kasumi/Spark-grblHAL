@@ -13,8 +13,16 @@
  * M505
  * De-energize
  *
- * M550
+ * M550 S[output_log<optional>]]
  * Print EDM plugin status.
+ * If S is omitted, prints general status.abort
+ * If S is specified, print log.
+ * For log printing to work, log must be disabled state (default or M551 S0).
+ *
+ * M551 S[log_enable<required>]
+ * Control log status.
+ * - log_enable: required. Must be 0 or 1.
+ * Whenever M551 S1 is called, all previous log entries are cleared.
  *
  * ## Supported G-codes
  * G1: Enabled feed rate control & retract.
@@ -37,6 +45,7 @@
 #define EDM_MCODE_START_TPOS 504
 #define EDM_MCODE_STOP 505
 #define EDM_MCODE_READ 550
+#define EDM_MCODE_LOG 551
 
 // You can change this if you somehow want to use Aux8 for different purposes.
 // If you change this, you also need to updard board configuration header.
@@ -82,6 +91,7 @@ typedef struct {
   log_entry_t entries[EDM_LOG_SIZE];
   int ix_write;
   int num_valid;
+  bool active;
 } edm_log_t;
 
 static volatile edm_log_t edm_log;
@@ -89,6 +99,7 @@ static volatile edm_log_t edm_log;
 static void init_log() {
   edm_log.ix_write = 0;
   edm_log.num_valid = 0;
+  edm_log.active = false;
 }
 
 static void add_log(log_entry_t entry) {
@@ -105,7 +116,7 @@ static void add_log(log_entry_t entry) {
 static on_probe_completed_ptr other_probe_completed;
 static user_mcode_ptrs_t other_mcode_ptrs;
 
-static void exec_mcode_read() {
+static void exec_mcode_read(bool print_log) {
   bool succ;
 
   uint8_t buf[1];
@@ -125,7 +136,7 @@ static void exec_mcode_read() {
 
   char resp[100];
   size_t ofs = 0;
-  ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "[EDM:stat=%d,",
+  ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "[EDM|stat=%d,",
                   edm_init_status);
   if (succ) {
     ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "i2c=ok,temp=%d", temp);
@@ -137,6 +148,50 @@ static void exec_mcode_read() {
 
   ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "]" ASCII_EOL);
   hal.stream.write(resp);
+
+  if (print_log && !edm_log.active) {
+    const int entry_per_line = 20;
+    int ix_read =
+        (edm_log.ix_write + EDM_LOG_SIZE - edm_log.num_valid) % EDM_LOG_SIZE;
+    int num_lines = (edm_log.num_valid + entry_per_line - 1) / entry_per_line;
+    for (int i = 0; i < num_lines; i++) {
+      ofs = 0;
+      ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "[EDML|");
+
+      int n_pulse = 0;
+      bool has_motion = false;
+      for (int j = 0; j < entry_per_line; j++) {
+        int ix_log = i * entry_per_line + j;
+        if (ix_log >= edm_log.num_valid) {
+          // no more log
+          ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "00,");
+        } else {
+          // has entry
+          log_entry_t entry = edm_log.entries[ix_read];
+          if (entry.status_flags > 0) {
+            has_motion = true;
+          }
+          n_pulse += entry.n_pulse;
+
+          int v_pulse = (entry.r_pulse * 10) / 255;
+          int v_short = (entry.r_short * 10) / 255;
+          ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "%d%d,", v_pulse,
+                          v_short);
+        }
+        ix_read = (ix_read + 1) % EDM_LOG_SIZE;
+      }
+      ofs += snprintf(resp + ofs, sizeof(resp) - ofs, has_motion ? "M," : "-,");
+      ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "%d]" ASCII_EOL, n_pulse);
+      hal.stream.write(resp);
+    }
+  }
+}
+
+static void exec_mode_log(bool enable) {
+  if (enable) {
+    init_log();
+  }
+  edm_log.active = enable;
 }
 
 // blocking I2C register write.
@@ -196,7 +251,8 @@ static void exec_mcode_stop() {
 
 static inline bool is_edm_mcode(user_mcode_t m) {
   return (m == EDM_MCODE_READ || m == EDM_MCODE_START_TNEG ||
-          m == EDM_MCODE_START_TPOS || m == EDM_MCODE_STOP);
+          m == EDM_MCODE_START_TPOS || m == EDM_MCODE_STOP ||
+          m == EDM_MCODE_LOG);
 }
 
 static user_mcode_type_t mcode_check(user_mcode_t m) {
@@ -218,8 +274,20 @@ static status_code_t mcode_validate(parser_block_t* block) {
 
   switch ((int)code) {
     case EDM_MCODE_READ:
-      if (block->words.mask != 0) {
-        return Status_GcodeUnusedWords;
+      if (block->words.s) {
+        block->words.s = 0;
+      }
+      return Status_OK;
+    case EDM_MCODE_LOG:
+      if (!block->words.s) {
+        return Status_GcodeValueWordMissing;
+      }
+      {
+        float v = block->values.s;
+        if (isnan(v) || (v != 0 && v != 1)) {
+          return Status_GcodeValueOutOfRange;
+        }
+        block->words.s = 0;
       }
       return Status_OK;
     case EDM_MCODE_STOP:
@@ -273,7 +341,10 @@ static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
   }
 
   if (code == EDM_MCODE_READ) {
-    exec_mcode_read();
+    exec_mcode_read(block->words.s);
+  } else if (code == EDM_MCODE_LOG) {
+    bool enable = block->values.s > 0;
+    exec_mode_log(enable);
   } else if (code == EDM_MCODE_START_TNEG || code == EDM_MCODE_START_TPOS) {
     bool is_tneg = (code == EDM_MCODE_START_TNEG);
 
@@ -380,14 +451,16 @@ static void edm_realtime(sys_state_t s) {
     hal.edm_state.discharge_short = true;
   }
 
-  log_entry_t entry = {
-      .status_flags = sys.step_control.execute_sys_motion ? ST_MOTION : 0,
-      .r_open = r_open,
-      .r_short = r_short,
-      .r_pulse = r_pulse,
-      .n_pulse = n_pulse,
-  };
-  add_log(entry);
+  if (edm_log.active) {
+    log_entry_t entry = {
+        .status_flags = sys.step_control.execute_sys_motion ? ST_MOTION : 0,
+        .r_open = r_open,
+        .r_short = r_short,
+        .r_pulse = r_pulse,
+        .n_pulse = n_pulse,
+    };
+    add_log(entry);
+  }
   edm_poll_cnt++;
 }
 
