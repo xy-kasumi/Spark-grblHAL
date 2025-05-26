@@ -12,6 +12,9 @@
  *
  * M505
  * De-energize
+ * 
+ * M550
+ * Print EDM plugin status.
  *
  * ## Supported G-codes
  * G1: Enabled feed rate control & retract.
@@ -60,12 +63,44 @@ static volatile uint8_t edm_init_status = 255;
 static bool edm_gate_port_found = false;
 static uint8_t edm_gate_port;
 
-static volatile uint32_t edm_timer_cnt = 0;
 static volatile uint32_t edm_poll_cnt = 0;
 static volatile bool edm_has_current = false;
 static volatile uint64_t last_poll_tick_us;  // hal.get_micros() time
 
 static volatile bool edm_removal_active = false;
+
+#define EDM_LOG_SIZE 10000  // 10 sec
+
+const uint8_t ST_MOTION = 0x01; // corresponds to execute_sys_motion
+
+typedef struct {
+  uint8_t status_flags;
+  uint8_t r_open;
+  uint8_t r_short;
+  uint8_t r_pulse;
+  uint8_t n_pulse;
+} log_entry_t;
+
+typedef struct {
+  log_entry_t entries[EDM_LOG_SIZE];
+  int ix_write;
+  int num_valid;
+} edm_log_t;
+
+static volatile edm_log_t edm_log;
+
+static void init_log() {
+  edm_log.ix_write = 0;
+  edm_log.num_valid = 0;
+}
+
+static void add_log(log_entry_t entry) {
+  edm_log.entries[edm_log.ix_write] = entry;
+  edm_log.ix_write = (edm_log.ix_write + 1) % EDM_LOG_SIZE;
+  if (edm_log.num_valid < EDM_LOG_SIZE) {
+    edm_log.num_valid++;
+  }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // M-code handlers
@@ -100,8 +135,8 @@ static void exec_mcode_read() {
   } else {
     ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "i2c=fail");
   }
-  ofs += snprintf(resp + ofs, sizeof(resp) - ofs, ",loops=%ld,polls=%ld",
-                  edm_timer_cnt, edm_poll_cnt);
+  ofs += snprintf(resp + ofs, sizeof(resp) - ofs, ",polls=%ld,log=%d",
+                  edm_poll_cnt, edm_log.num_valid);
 
   ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "]" ASCII_EOL);
   hal.stream.write(resp);
@@ -319,7 +354,6 @@ static void edm_realtime(sys_state_t s) {
   }
 
   // Limit to 1ms polling rate.
-  edm_timer_cnt++;
   uint64_t t_curr = hal.get_micros();
   if (t_curr - last_poll_tick_us < 1000) {
     return;
@@ -339,6 +373,7 @@ static void edm_realtime(sys_state_t s) {
     return;
   }
 
+  uint8_t n_pulse = buf[0];
   uint8_t r_pulse = buf[3];
   uint8_t r_short = buf[4];
   uint8_t r_open = buf[5];
@@ -349,6 +384,14 @@ static void edm_realtime(sys_state_t s) {
     hal.edm_state.discharge_short = true;
   }
 
+  log_entry_t entry = {
+      .status_flags = sys.step_control.execute_sys_motion ? ST_MOTION : 0,
+      .r_open = r_open,
+      .r_short = r_short,
+      .r_pulse = r_pulse,
+      .n_pulse = n_pulse,
+  };
+  add_log(entry);
   edm_poll_cnt++;
 }
 
@@ -385,6 +428,9 @@ void edm_init() {
   // Register report printer.
   other_reports = grbl.on_report_options;
   grbl.on_report_options = edm_report_options;
+
+  // Init logging. This must come before edm_realtime starting.
+  init_log();
 
   // Register M-code handler by appending to the call chain.
   memcpy(&other_mcode_ptrs, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
