@@ -146,6 +146,9 @@ static void exec_mcode_read(bool print_log) {
   ofs += snprintf(resp + ofs, sizeof(resp) - ofs, ",polls=%ld,log=%d",
                   edm_poll_cnt, edm_log.num_valid);
 
+  ofs += snprintf(resp + ofs, sizeof(resp) - ofs, ",F(step)=%ldHz",
+                  hal.f_step_timer);
+
   ofs += snprintf(resp + ofs, sizeof(resp) - ofs, "]" ASCII_EOL);
   hal.stream.write(resp);
 
@@ -277,6 +280,7 @@ static status_code_t mcode_validate(parser_block_t* block) {
       if (block->words.s) {
         block->words.s = 0;
       }
+      block->user_mcode_sync = true;
       return Status_OK;
     case EDM_MCODE_LOG:
       if (!block->words.s) {
@@ -289,6 +293,7 @@ static status_code_t mcode_validate(parser_block_t* block) {
         }
         block->words.s = 0;
       }
+      block->user_mcode_sync = true;
       return Status_OK;
     case EDM_MCODE_STOP:
       if (block->words.mask != 0) {
@@ -297,6 +302,7 @@ static status_code_t mcode_validate(parser_block_t* block) {
       if (edm_init_status != 0) {
         return Status_SelfTestFailed;
       }
+      block->user_mcode_sync = true;
       return Status_OK;
     default: {
       // P (pulse duration): 100us~1000us is allowed
@@ -326,6 +332,7 @@ static status_code_t mcode_validate(parser_block_t* block) {
       if (edm_init_status != 0) {
         return Status_SelfTestFailed;
       }
+      block->user_mcode_sync = true;
       return Status_OK;
     }
   }
