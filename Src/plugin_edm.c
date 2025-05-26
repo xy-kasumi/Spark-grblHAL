@@ -12,7 +12,7 @@
  *
  * M505
  * De-energize
- * 
+ *
  * M550
  * Print EDM plugin status.
  *
@@ -60,9 +60,6 @@ static const uint8_t REG_CKP_N_PULSE = 0x10;
 // You can use whatever other numbers to indicate failure modes.
 static volatile uint8_t edm_init_status = 255;
 
-static bool edm_gate_port_found = false;
-static uint8_t edm_gate_port;
-
 static volatile uint32_t edm_poll_cnt = 0;
 static volatile bool edm_has_current = false;
 static volatile uint64_t last_poll_tick_us;  // hal.get_micros() time
@@ -71,7 +68,7 @@ static volatile bool edm_removal_active = false;
 
 #define EDM_LOG_SIZE 10000  // 10 sec
 
-const uint8_t ST_MOTION = 0x01; // corresponds to execute_sys_motion
+const uint8_t ST_MOTION = 0x01;  // corresponds to execute_sys_motion
 
 typedef struct {
   uint8_t status_flags;
@@ -114,7 +111,7 @@ static void exec_mcode_read() {
   uint8_t buf[1];
   i2c_transfer_t tx;
   tx.address = PULSER_ADDR;
-  tx.word_addr = 0x03;
+  tx.word_addr = REG_TEMPERATURE;
   tx.word_addr_bytes = 1;
   tx.count = 1;
   tx.data = buf;
@@ -145,7 +142,6 @@ static void exec_mcode_read() {
 // blocking I2C register write.
 // returns true if write was successful
 static bool write_reg(uint8_t reg_addr, uint8_t val) {
-  uint8_t buf[6];
   i2c_transfer_t tx;
   tx.address = PULSER_ADDR;
   tx.word_addr = reg_addr;
@@ -412,17 +408,6 @@ static void edm_report_options(bool newopt) {
 
 ////////////////////////////////////////////////////////////////////////////////
 // Plugin Init
-
-// returns true if found. Stores result into data (uint8_t*)
-static bool port_search_cb(xbar_t* properties, uint8_t port, void* data) {
-  uint8_t* result_ptr = (uint8_t*)data;
-
-  if (properties->function == PIN_FUNCTION_PULSER_GATE) {
-    *result_ptr = port;
-    return true;
-  }
-  return false;
-}
 
 void edm_init() {
   // Register report printer.
