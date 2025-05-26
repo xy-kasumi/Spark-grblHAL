@@ -3,20 +3,21 @@
  * Driver for Spark EDM.
  *
  * ## Supported M-codes
- * 
+ *
  * M503 P[pulse_time_us] Q[pulse_current_a] R[max_duty]
  * Energize, tool negative voltage
- * 
+ *
  * M504 P[pulse_time_us] Q[pulse_current_a] R[max_duty]
  * Energize, tool positive voltage
- * 
+ *
  * M505
  * De-energize
- * 
+ *
  * ## Supported G-codes
  * G1: Enabled feed rate control & retract.
  * G38.2, G38.3: Probe using current sensing. De-energize (same as M505) on
- * contact or not-found completion. Need M503 or M504 before G38 to activate current for probing.
+ * contact or not-found completion. Need M503 or M504 before G38 to activate
+ * current for probing.
  */
 #if EDM_ENABLE
 
@@ -26,6 +27,7 @@
 #include "i2c.h"
 #include "platform.h"
 
+#include <math.h>
 #include <stdio.h>
 
 #define EDM_MCODE_START_TNEG 503
@@ -198,30 +200,29 @@ static status_code_t mcode_validate(parser_block_t* block) {
       }
       return Status_OK;
     default: {
-      parameter_words_t mask = block->words;
-      mask.p = 0;
-      mask.q = 0;
-      mask.r = 0;
-      if (mask.value != 0) {
-        return Status_GcodeUnusedWords;
-      }
       // P (pulse duration): 100us~1000us is allowed
       if (block->words.p) {
-        if (block->values.p < 100 || block->values.p > 1000) {
+        float v = block->values.p;
+        if (isnan(v) || v < 100 || v > 1000) {
           return Status_GcodeValueOutOfRange;
         }
+        block->words.p = 0;
       }
       // Q (pulse current): 0(min)~20(A) is allowed
       if (block->words.q) {
-        if (block->values.q < 0 || block->values.q > 20) {
+        float v = block->values.q;
+        if (isnan(v) || v < 0 || v > 20) {
           return Status_GcodeValueOutOfRange;
         }
+        block->words.q = 0;
       }
       // R (duty factor): 1~95 is allowed
       if (block->words.r) {
-        if (block->values.r < 1 || block->values.r > 95) {
+        float v = block->values.r;
+        if (isnan(v) || v < 1 || v > 95) {
           return Status_GcodeValueOutOfRange;
         }
+        block->words.r = 0;
       }
       if (edm_init_status != 0) {
         return Status_SelfTestFailed;
