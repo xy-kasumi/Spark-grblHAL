@@ -2,10 +2,21 @@
 /*
  * Driver for Spark EDM.
  *
- * M503: Energize
- * M505: De-energize
+ * ## Supported M-codes
+ * 
+ * M503 P[pulse_time_us] Q[pulse_current_a] R[max_duty]
+ * Energize, tool negative voltage
+ * 
+ * M504 P[pulse_time_us] Q[pulse_current_a] R[max_duty]
+ * Energize, tool positive voltage
+ * 
+ * M505
+ * De-energize
+ * 
+ * ## Supported G-codes
+ * G1: Enabled feed rate control & retract.
  * G38.2, G38.3: Probe using current sensing. De-energize (same as M505) on
- * contact or not-found completion.
+ * contact or not-found completion. Need M503 or M504 before G38 to activate current for probing.
  */
 #if EDM_ENABLE
 
@@ -123,12 +134,15 @@ inline static void set_gate(bool on) {
 }
 
 // must not be called when edm_init_status != 0
-static void exec_mcode_start_tneg() {
+static void exec_mcode_start(bool tool_neg,
+                             int pulse_dur_10us,
+                             int pulse_current_100ma,
+                             int pulse_duty_pct) {
   bool all_ok = true;
-  all_ok &= write_reg(REG_PULSE_CURRENT, 1);
-  all_ok &= write_reg(REG_PULSE_DUR, 25);
-  all_ok &= write_reg(REG_MAX_DUTY, 25);
-  all_ok &= write_reg(REG_POLARITY, 2);  // 2: T- W+
+  all_ok &= write_reg(REG_PULSE_CURRENT, pulse_current_100ma);
+  all_ok &= write_reg(REG_PULSE_DUR, pulse_dur_10us);
+  all_ok &= write_reg(REG_MAX_DUTY, pulse_duty_pct);
+  all_ok &= write_reg(REG_POLARITY, tool_neg ? 2 : 1);  // 2: T- W+, 1: T+ W-
   if (!all_ok) {
     system_raise_alarm(Alarm_SelftestFailed);
     return;
@@ -169,13 +183,51 @@ static status_code_t mcode_validate(parser_block_t* block) {
                                      : Status_Unhandled;
   }
 
-  if (code == EDM_MCODE_READ) {
-    return Status_OK;
-  } else {
-    if (edm_init_status != 0) {
-      return Status_SelfTestFailed;
+  switch ((int)code) {
+    case EDM_MCODE_READ:
+      if (block->words.mask != 0) {
+        return Status_GcodeUnusedWords;
+      }
+      return Status_OK;
+    case EDM_MCODE_STOP:
+      if (block->words.mask != 0) {
+        return Status_GcodeUnusedWords;
+      }
+      if (edm_init_status != 0) {
+        return Status_SelfTestFailed;
+      }
+      return Status_OK;
+    default: {
+      parameter_words_t mask = block->words;
+      mask.p = 0;
+      mask.q = 0;
+      mask.r = 0;
+      if (mask.value != 0) {
+        return Status_GcodeUnusedWords;
+      }
+      // P (pulse duration): 100us~1000us is allowed
+      if (block->words.p) {
+        if (block->values.p < 100 || block->values.p > 1000) {
+          return Status_GcodeValueOutOfRange;
+        }
+      }
+      // Q (pulse current): 0(min)~20(A) is allowed
+      if (block->words.q) {
+        if (block->values.q < 0 || block->values.q > 20) {
+          return Status_GcodeValueOutOfRange;
+        }
+      }
+      // R (duty factor): 1~95 is allowed
+      if (block->words.r) {
+        if (block->values.r < 1 || block->values.r > 95) {
+          return Status_GcodeValueOutOfRange;
+        }
+      }
+      if (edm_init_status != 0) {
+        return Status_SelfTestFailed;
+      }
+      return Status_OK;
     }
-    return Status_OK;
   }
 }
 
@@ -190,10 +242,27 @@ static void mcode_execute(uint_fast16_t state, parser_block_t* block) {
 
   if (code == EDM_MCODE_READ) {
     exec_mcode_read();
-  } else if (code == EDM_MCODE_START_TNEG) {
-    exec_mcode_start_tneg();
-  } else if (code == EDM_MCODE_START_TPOS) {
-    // TODO: implement
+  } else if (code == EDM_MCODE_START_TNEG || code == EDM_MCODE_START_TPOS) {
+    bool is_tneg = (code == EDM_MCODE_START_TNEG);
+
+    int pulse_dur_10us = 50;  // 500us default
+    if (block->words.p) {
+      pulse_dur_10us = block->values.p * 0.1f;
+    }
+    int pulse_current_100ma = 10;  // 1A default
+    if (block->words.q) {
+      pulse_current_100ma = block->values.q * 10;
+      if (pulse_current_100ma == 0) {
+        pulse_current_100ma = 1;  // 100mA (minimum)
+      }
+    }
+    int pulse_duty_pct = 25;  // 25% default
+    if (block->words.r) {
+      pulse_duty_pct = block->values.r;
+    }
+
+    exec_mcode_start(is_tneg, pulse_dur_10us, pulse_current_100ma,
+                     pulse_duty_pct);
   } else if (code == EDM_MCODE_STOP) {
     exec_mcode_stop();
   }
